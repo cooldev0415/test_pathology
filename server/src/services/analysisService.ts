@@ -18,20 +18,26 @@ export class AnalysisService {
     const patientAge = this.calculateAge(oruData.patientInfo.dob);
     const patientGender = oruData.patientInfo.gender.toUpperCase() as 'M' | 'F';
     
+    console.log(`Patient age: ${patientAge}, gender: ${patientGender}`);
+    
     for (const group of oruData.testGroups) {
       console.log(`Processing test group: ${group.name}`);
       
       for (const result of group.results) {
-        console.log(`Processing result: ${result.name} = ${result.value} ${result.units} (${result.abnormalFlag})`);
+        console.log(`Processing result: ${result.name} = ${result.value} ${result.units} (abnormal flag: ${result.abnormalFlag || 'none'})`);
         
         const diagnosticMetric = this.dataService.getDiagnosticMetric(result.name);
         
         if (diagnosticMetric) {
+          console.log(`Found diagnostic metric:`, diagnosticMetric);
+          
           const isAbnormal = this.isAbnormalResult(result, diagnosticMetric, patientAge, patientGender);
           const isHighRisk = this.isHighRiskResult(result, diagnosticMetric, patientAge, patientGender);
           
+          console.log(`Result analysis - isAbnormal: ${isAbnormal}, isHighRisk: ${isHighRisk}`);
+          
           if (isAbnormal) {
-            console.log(`Abnormal result found: ${result.name}`);
+            console.log(`Adding abnormal result: ${result.name}`);
             abnormalResults.push({
               testName: result.name,
               value: result.value,
@@ -40,10 +46,30 @@ export class AnalysisService {
               isHighRisk,
               group: group.name
             });
+          } else {
+            console.log(`Result not marked as abnormal. Checking conditions:`);
+            console.log(`- Age check: ${!diagnosticMetric.min_age || patientAge >= diagnosticMetric.min_age}`);
+            console.log(`- Gender check: ${!diagnosticMetric.gender || diagnosticMetric.gender === patientGender}`);
+            console.log(`- Abnormal flag: ${result.abnormalFlag}`);
+            console.log(`- Numeric value: ${parseFloat(result.value)}`);
+            console.log(`- Reference ranges:`, {
+              everlab: {
+                lower: diagnosticMetric.everlab_lower,
+                higher: diagnosticMetric.everlab_higher
+              },
+              standard: {
+                lower: diagnosticMetric.standard_lower,
+                higher: diagnosticMetric.standard_higher
+              }
+            });
           }
+        } else {
+          console.log(`No diagnostic metric found for test: ${result.name}`);
         }
       }
     }
+    
+    console.log(`Analysis complete. Found ${abnormalResults.length} abnormal results.`);
     
     return {
       patientInfo: oruData.patientInfo,
@@ -71,29 +97,65 @@ export class AnalysisService {
     patientAge: number,
     patientGender: 'M' | 'F'
   ): boolean {
-    if (metric.min_age && patientAge < metric.min_age) return false;
-    if (metric.max_age && patientAge > metric.max_age) return false;
-    if (metric.gender && metric.gender !== patientGender) return false;
+    console.log(`Checking if result is abnormal:`, {
+      value: result.value,
+      abnormalFlag: result.abnormalFlag,
+      metric: {
+        name: metric.name,
+        standard_lower: metric.standard_lower,
+        standard_higher: metric.standard_higher,
+        everlab_lower: metric.everlab_lower,
+        everlab_higher: metric.everlab_higher,
+        min_age: metric.min_age,
+        max_age: metric.max_age,
+        gender: metric.gender
+      },
+      patientAge,
+      patientGender
+    });
+
+    if (metric.min_age && patientAge < metric.min_age) {
+      console.log('Result not abnormal: patient age below minimum');
+      return false;
+    }
+    if (metric.max_age && patientAge > metric.max_age) {
+      console.log('Result not abnormal: patient age above maximum');
+      return false;
+    }
+    if (metric.gender && metric.gender !== patientGender) {
+      console.log('Result not abnormal: patient gender does not match');
+      return false;
+    }
 
     // If there's an abnormal flag, use it first
     if (result.abnormalFlag && result.abnormalFlag.trim()) {
-      return ['H', 'L', 'A', '*'].includes(result.abnormalFlag.trim());
+      const isAbnormal = ['H', 'L', 'A', '*'].includes(result.abnormalFlag.trim());
+      console.log(`Checking abnormal flag: ${result.abnormalFlag} -> ${isAbnormal}`);
+      return isAbnormal;
     }
 
     // Parse the numeric value
     const numericValue = parseFloat(result.value);
-    if (isNaN(numericValue)) return false;
+    if (isNaN(numericValue)) {
+      console.log('Result not abnormal: value is not a number');
+      return false;
+    }
 
     // Check against Everlab ranges first (if available)
     if (metric.everlab_lower !== undefined && metric.everlab_higher !== undefined) {
-      return numericValue < metric.everlab_lower || numericValue > metric.everlab_higher;
+      const isAbnormal = numericValue < metric.everlab_lower || numericValue > metric.everlab_higher;
+      console.log(`Checking Everlab range: ${metric.everlab_lower}-${metric.everlab_higher} -> ${isAbnormal}`);
+      return isAbnormal;
     }
 
     // Fall back to standard ranges
     if (metric.standard_lower !== undefined && metric.standard_higher !== undefined) {
-      return numericValue < metric.standard_lower || numericValue > metric.standard_higher;
+      const isAbnormal = numericValue < metric.standard_lower || numericValue > metric.standard_higher;
+      console.log(`Checking standard range: ${metric.standard_lower}-${metric.standard_higher} -> ${isAbnormal}`);
+      return isAbnormal;
     }
 
+    console.log('Result not abnormal: no valid ranges to check against');
     return false;
   }
 

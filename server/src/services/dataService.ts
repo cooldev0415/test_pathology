@@ -50,8 +50,11 @@ export class DataService {
     const fileContent = fs.readFileSync(filePath, 'utf-8');
     const records = csv.parse(fileContent, { columns: true });
 
+    console.log(`Found ${records.length} diagnostic metrics to load`);
+
     for (const record of records) {
-      this.diagnosticMetrics.set(record.name, {
+      // Create the main metric entry
+      const metric: DiagnosticMetric = {
         id: record.id,
         name: record.name,
         code: record.code,
@@ -65,9 +68,34 @@ export class DataService {
         standard_lower: record.standard_lower ? parseFloat(record.standard_lower) : undefined,
         standard_higher: record.standard_higher ? parseFloat(record.standard_higher) : undefined,
         everlab_lower: record.everlab_lower ? parseFloat(record.everlab_lower) : undefined,
-        everlab_higher: record.everlab_higher ? parseFloat(record.everlab_higher) : undefined
-      });
+        everlab_higher: record.everlab_higher ? parseFloat(record.everlab_higher) : undefined,
+        min_age: record.min_age ? parseFloat(record.min_age) : undefined,
+        max_age: record.max_age ? parseFloat(record.max_age) : undefined,
+        gender: record.gender === 'Any' ? null : record.gender as 'M' | 'F' | null
+      };
+
+      // Add the main entry
+      this.diagnosticMetrics.set(record.name, metric);
+      console.log(`Added metric: ${record.name}`);
+
+      // Add entries for each ORU code
+      if (record.oru_sonic_codes) {
+        const codes: string[] = record.oru_sonic_codes.split(';').map((code: string) => code.trim());
+        for (const code of codes) {
+          if (code) {
+            this.diagnosticMetrics.set(code, metric);
+            console.log(`Added alias entry for ${record.name}: ${code}`);
+          }
+        }
+      }
+
+      // Special case for E.S.R. test
+      if (record.name === 'Erythrocyte Sedimentation Rate') {
+        console.log('Found E.S.R. metric:', metric);
+      }
     }
+
+    console.log(`Loaded ${this.diagnosticMetrics.size} diagnostic metrics`);
   }
 
   private async loadDiagnostics(): Promise<void> {
@@ -140,10 +168,40 @@ export class DataService {
   }
 
   public getDiagnosticMetric(name: string): DiagnosticMetric | undefined {
-    console.log(`Looking up diagnostic metric: ${name}`);
-    const metric = this.diagnosticMetrics.get(name);
-    console.log(metric ? `Found metric: ${metric.name}` : 'Metric not found');
-    return metric;
+    console.log(`Looking up diagnostic metric for: ${name}`);
+    
+    // First try exact match
+    let metric = this.diagnosticMetrics.get(name);
+    if (metric) {
+      console.log(`Found metric by exact name match: ${name}`);
+      return metric;
+    }
+
+    // If no exact match, try matching against oru_sonic_codes
+    for (const [metricName, metric] of this.diagnosticMetrics.entries()) {
+      console.log(`Checking metric ${metricName} for ORU code match`);
+      if (metric.oru_sonic_codes) {
+        const codes = metric.oru_sonic_codes.split(';').map(code => code.trim());
+        console.log(`ORU codes for ${metricName}:`, codes);
+        if (codes.includes(name)) {
+          console.log(`Found metric by ORU code match: ${name} -> ${metricName}`);
+          return metric;
+        }
+      }
+    }
+
+    // Special case for E.S.R. test
+    if (name === 'E.S.R.') {
+      console.log('Looking for E.S.R. metric by special case');
+      const esrMetric = this.diagnosticMetrics.get('Erythrocyte Sedimentation Rate');
+      if (esrMetric) {
+        console.log('Found E.S.R. metric by special case handling');
+        return esrMetric;
+      }
+    }
+
+    console.log(`No metric found for test: ${name}`);
+    return undefined;
   }
 
   public getDiagnostic(name: string): Diagnostic | undefined {

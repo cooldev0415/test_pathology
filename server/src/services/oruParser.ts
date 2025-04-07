@@ -152,6 +152,8 @@ export class ORUParser {
    * Parse test result from OBX segment
    */
   private parseTestResult(segments: string[]): ORUResult | null {
+    console.log('Parsing test result from segments:', segments);
+
     // Skip non-numeric results
     if (segments[2] !== 'NM') {
       console.log(`Skipping non-numeric result: ${segments[3]}`);
@@ -159,14 +161,33 @@ export class ORUParser {
     }
 
     const code = segments[2];
-    const testName = segments[3].split('^')[1] || segments[3];
+    
+
+    let testName = '';
+    const testNameParts = segments[3].split('^');
+    console.log('Test name parts:', testNameParts);
+    
+    // Take the second part as the test name if it exists, otherwise use the first part
+    testName = (testNameParts[1] || testNameParts[0]).replace(':', '').trim();
+    
+    if (testName === 'E.S.R.' || testNameParts[0] === '4537-7') {
+      testName = 'E.S.R.';
+      console.log('Found E.S.R. test, using exact name for matching');
+    }
+    
     const value = segments[5];
-    // Take only the first part of the units before any caret
-    const units = segments[6].split('^')[0];
+    const units = segments[6] ? segments[6].split('^')[0] : '';
     const referenceRange = segments[7];
     const abnormalFlag = segments[8];
 
-    console.log(`Parsed test result: ${testName} = ${value} ${units} (${abnormalFlag})`);
+    console.log('Parsed test result:', {
+      code,
+      name: testName,
+      value,
+      units,
+      referenceRange,
+      abnormalFlag
+    });
 
     return {
       code,
@@ -179,19 +200,16 @@ export class ORUParser {
   }
 
   private getTestGroupName(testName: string): string {
-    // Try to find a matching diagnostic metric
     const diagnosticMetric = this.dataService.getDiagnosticMetric(testName);
     
     if (diagnosticMetric) {
       console.log(`Found diagnostic metric for ${testName}: ${diagnosticMetric.name}`);
       
-      // First try to get the diagnostic group from the metric
       if (diagnosticMetric.diagnostic_groups) {
         console.log(`Using diagnostic group from metric: ${diagnosticMetric.diagnostic_groups}`);
         return diagnosticMetric.diagnostic_groups;
       }
       
-      // If no diagnostic group, try to get it from the diagnostic
       if (diagnosticMetric.diagnostic) {
         const diagnostic = this.dataService.getDiagnostic(diagnosticMetric.diagnostic);
         if (diagnostic && diagnostic.diagnostic_groups) {
@@ -200,7 +218,6 @@ export class ORUParser {
         }
       }
       
-      // If still no group, use the metric's group
       if (diagnosticMetric.group) {
         console.log(`Using metric group: ${diagnosticMetric.group}`);
         return diagnosticMetric.group;
